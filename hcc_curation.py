@@ -50,7 +50,7 @@ from lifelines.utils import median_survival_times
 from scipy.stats import mannwhitneyu, chi2_contingency, fisher_exact
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-BASE = Path(r'C:\Users\prashanth.jain\OneDrive - Integra Connect LLC\Documents\HCC Curation List Project')
+BASE = Path(r'C:\Users\prashanth.jain\Desktop\Projects\HCC')
 
 PATHS = {
     'data'     : BASE / 'data',
@@ -181,7 +181,6 @@ def apply_global_exclusions(
     Criteria applied:
     - Must have C22.0 diagnosis in disease table
     - Age ≥ 18 at HCC diagnosis
-    - No other primary cancer treated during study period (other_primary != 1)
     - No clinical trial participation during study period (no S99 procedure code)
     """
     # Patients with a clinical trial procedure code (S99) on/after study start
@@ -193,13 +192,13 @@ def apply_global_exclusions(
         ]
     )
 
-    eligible = df_demogr[
+    mask = (
         df_demogr['mpi_id'].isin(df_disease_c220['mpi_id']) &  # C22.0 confirmed
         (df_demogr['age_dx'] >= MIN_AGE) &                      # age ≥ 18
-        (df_demogr['other_primary'] != 1) &                     # no other primary cancer
         (~df_demogr['mpi_id'].isin(trial_ids))                  # no clinical trial
-    ]
-    return eligible
+    )
+
+    return df_demogr[mask]
 
 
 def build_priority1(
