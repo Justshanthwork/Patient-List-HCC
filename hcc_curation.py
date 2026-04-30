@@ -170,10 +170,38 @@ def categorize_regimen(regimen: str) -> str:
 
 # ── Pipeline ───────────────────────────────────────────────────────────────────
 
+def load_exclusion_list(base_dir: Path) -> set:
+    """
+    Load the already-curated patient list and return their combined_div_mpi_ids as a set.
+
+    Searches for an Excel file whose name contains 'HCC General Disease Curation List'
+    in the base project directory. Patients in this file are excluded from the new list
+    because they have already been sent for curation.
+    """
+    matches = [f for f in base_dir.iterdir()
+               if 'HCC General Disease Curation List' in f.name and f.suffix == '.xlsx']
+    if not matches:
+        print("[warn] No 'HCC General Disease Curation List' file found — no pre-curated exclusions applied")
+        return set()
+
+    path = matches[0]
+    df_excl = pd.read_excel(path, dtype=str)
+
+    # Use combined_div_mpi_id as the primary exclusion key (division-specific)
+    if 'combined_div_mpi_id' not in df_excl.columns:
+        raise KeyError(f"'combined_div_mpi_id' column not found in {path.name}. "
+                       f"Columns present: {df_excl.columns.tolist()}")
+
+    excl_ids = set(df_excl['combined_div_mpi_id'].dropna())
+    print(f"[excl] Pre-curated exclusion list loaded: {len(excl_ids):,} patients  ({path.name})")
+    return excl_ids
+
+
 def apply_global_exclusions(
     df_demogr: pd.DataFrame,
     df_disease_c220: pd.DataFrame,
     df_procedure: pd.DataFrame,
+    already_curated_ids: set,
 ) -> pd.DataFrame:
     """
     Apply global inclusion/exclusion criteria and return the eligible demographics table.
@@ -182,6 +210,7 @@ def apply_global_exclusions(
     - Must have C22.0 diagnosis in disease table
     - Age ≥ 18 at HCC diagnosis
     - No clinical trial participation during study period (no S99 procedure code)
+    - Not already in the pre-curated exclusion list (HCC General Disease Curation List)
     """
     # Patients with a clinical trial procedure code (S99) on/after study start
     trial_ids = set(
@@ -193,9 +222,10 @@ def apply_global_exclusions(
     )
 
     mask = (
-        df_demogr['mpi_id'].isin(df_disease_c220['mpi_id']) &  # C22.0 confirmed
-        (df_demogr['age_dx'] >= MIN_AGE) &                      # age ≥ 18
-        (~df_demogr['mpi_id'].isin(trial_ids))                  # no clinical trial
+        df_demogr['mpi_id'].isin(df_disease_c220['mpi_id']) &          # C22.0 confirmed
+        (df_demogr['age_dx'] >= MIN_AGE) &                              # age ≥ 18
+        (~df_demogr['mpi_id'].isin(trial_ids)) &                        # no clinical trial
+        (~df_demogr['combined_div_mpi_id'].isin(already_curated_ids))   # not already curated
     )
 
     return df_demogr[mask]
@@ -389,10 +419,13 @@ def main():
     df_disease_c220 = df_disease[df_disease['cancer_code'] == HCC_CODE]
     print(f"[base] C22.0 in disease table: {df_disease_c220['mpi_id'].nunique():,}")
 
+    # ── Load pre-curated exclusion list ────────────────────────────────────────
+    already_curated_ids = load_exclusion_list(BASE)
+
     # ── Global exclusions ──────────────────────────────────────────────────────
-    df_eligible = apply_global_exclusions(df_demogr, df_disease_c220, df_procedure)
+    df_eligible = apply_global_exclusions(df_demogr, df_disease_c220, df_procedure, already_curated_ids)
     eligible_ids = set(df_eligible['mpi_id'])
-    print(f"[excl] After age/other-primary/trial exclusions: {len(eligible_ids):,}")
+    print(f"[excl] After age/trial/pre-curated exclusions: {len(eligible_ids):,}")
 
     # ── Priority 1 ─────────────────────────────────────────────────────────────
     p1_ids, df_lot_p1 = build_priority1(df_lot, df_procedure, eligible_ids)
